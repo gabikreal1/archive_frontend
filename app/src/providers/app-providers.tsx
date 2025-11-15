@@ -6,9 +6,11 @@ import { WalletProvider } from './wallet-provider';
 import { ReactNode, useEffect } from 'react';
 import { registerServiceWorker } from '@/lib/pwa/register-sw';
 import { AuthGate } from '@/components/auth/AuthGate';
+import { RealtimeProvider } from './realtime-provider';
 
 export function AppProviders({ children }: { children: ReactNode }) {
   useEffect(() => {
+    if (process.env.NODE_ENV !== 'production') return;
     registerServiceWorker();
   }, []);
 
@@ -16,7 +18,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
     <QueryClientProvider>
       <AuthProvider>
         <AuthGate>
-          <WalletProvider>{children}</WalletProvider>
+          <WalletProvider>
+            <RealtimeProvider>{children}</RealtimeProvider>
+          </WalletProvider>
         </AuthGate>
       </AuthProvider>
     </QueryClientProvider>

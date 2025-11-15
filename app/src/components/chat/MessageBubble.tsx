@@ -1,7 +1,6 @@
 "use client";
 
 import type { ChatMessage } from '@/types/dialog';
-import { MessageActions } from './MessageActions';
 import { cn } from '@/lib/utils';
 
 interface MessageBubbleProps {
@@ -19,7 +18,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   return (
     <div className="space-y-2">
       <div className="text-xs uppercase tracking-wide text-white/50">
-        {ROLE_LABEL[message.role]} · {new Date(message.createdAt).toLocaleTimeString()}
+        {ROLE_LABEL[message.role]}
       </div>
       <div
         className={cn(
@@ -28,7 +27,6 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         )}
       >
         <p className="whitespace-pre-wrap">{message.content}</p>
-        {message.role === 'assistant' ? <MessageActions /> : null}
       </div>
     </div>
   );

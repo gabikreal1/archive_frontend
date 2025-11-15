@@ -59,7 +59,8 @@ function respondWithMessage(taskId: string, content: string): ChatMessage {
     role: 'assistant',
     content: `Echoing “${content}” for task ${taskId}.`,
     createdAt: new Date().toISOString(),
-    status: 'complete'
+    status: 'complete',
+    kind: 'agent_bot_message'
   };
 }
 
@@ -89,6 +90,14 @@ export function handleMockRequest<T>(path: string, init?: RequestInit): T {
   const method = (init?.method ?? 'GET').toUpperCase();
   const segments = path.split('/').filter(Boolean);
   const payload = parseBody(init?.body);
+
+  if (segments[0] === 'dialog' && segments[1] === 'messages' && method === 'POST') {
+    const content = (payload as { content?: string })?.content ?? '';
+    const jobId = (payload as { jobId?: string; taskId?: string })?.taskId ??
+      (payload as { jobId?: string })?.jobId ??
+      ensureTaskSummary().task_id;
+    return respondWithMessage(jobId, content) as T;
+  }
 
   if (segments[0] === 'tasks') {
     if (segments.length === 1 && method === 'POST') {
