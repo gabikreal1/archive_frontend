@@ -1,0 +1,1 @@
+Add generated PWA icons (192x192 and 512x512 PNGs) to this directory before shipping the app.
