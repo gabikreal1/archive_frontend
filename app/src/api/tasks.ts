@@ -7,6 +7,17 @@ import { mapJobResponse } from '@/lib/task-map';
 const feedbackStore = new Map<string, TaskFeedback>();
 const disputeStore = new Map<string, TaskDispute>();
 
+const OFFLINE_MODE =
+  process.env.NEXT_PUBLIC_OFFLINE_MODE === 'true' ||
+  process.env.NEXT_PUBLIC_OFFLINE_MODE === '1' ||
+  process.env.NEXT_PUBLIC_OFFLINE_MODE === 'mock';
+
+type RatingPayload = {
+  deliveryId: string;
+  rating: number;
+  feedback?: string;
+};
+
 export interface JobCreationPayload {
   description: string;
   tags?: string[];
@@ -53,5 +64,27 @@ export const tasksApi = {
   async dispute(taskId: string, payload: TaskDispute) {
     disputeStore.set(taskId, payload);
     return Promise.resolve(payload);
+  },
+  async submitRating(taskId: string, payload: RatingPayload) {
+    if (!payload.deliveryId) {
+      throw new Error('deliveryId is required to submit rating');
+    }
+
+    const request = {
+      deliveryId: payload.deliveryId,
+      rating: payload.rating,
+      feedback: payload.feedback
+    };
+
+    if (!OFFLINE_MODE) {
+      await apiClient.post(`/jobs/${taskId}/rating`, request);
+    }
+
+    const feedback: TaskFeedback = {
+      rating: payload.rating,
+      comment: payload.feedback
+    };
+    feedbackStore.set(taskId, feedback);
+    return feedback;
   }
 };

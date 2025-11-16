@@ -98,4 +98,5 @@ export interface TaskDetails extends CreatedTaskResponse {
   recommendations?: Partial<Record<'premium' | 'economy', BidTierSuggestion>>;
   executor_candidate?: AutopilotBidCandidate;
   execution_result?: JobExecutionOutput;
+  delivery_id?: string;
 }

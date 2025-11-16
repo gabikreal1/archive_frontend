@@ -11,10 +11,18 @@ interface BidTierCardProps {
   onSelect: (bid: BidTierSuggestion) => void;
   responses?: Record<string, string>;
   onResponseChange: (field: string, value: string) => void;
+  executionState?: 'idle' | 'executing' | 'delivered';
 }
 
-export function BidTierCard({ bid, selected, completed, onSelect, responses, onResponseChange }: BidTierCardProps) {
+export function BidTierCard({ bid, selected, completed, onSelect, responses, onResponseChange, executionState }: BidTierCardProps) {
   const showForm = selected && (bid.required_fields?.length ?? 0) > 0;
+  const showStatus = selected && executionState && executionState !== 'idle';
+
+  const statusLabel = (() => {
+    if (executionState === 'executing') return 'Agent is delivering your job…';
+    if (executionState === 'delivered') return 'Delivery ready below';
+    return undefined;
+  })();
 
   return (
     <Card className={selected ? 'border-sky-400 bg-sky-400/10' : ''}>
@@ -28,6 +36,18 @@ export function BidTierCard({ bid, selected, completed, onSelect, responses, onR
       <p className="mt-2 text-sm text-white/70">
         ETA {bid.time_estimate_min} min · {bid.description ?? 'Marketplace bid'}
       </p>
+      {showStatus && statusLabel ? (
+        <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white">
+          {executionState === 'executing' ? (
+            <span className="inline-flex items-center gap-2">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-amber-300" aria-hidden />
+              {statusLabel}
+            </span>
+          ) : (
+            <span className="text-emerald-300">{statusLabel}</span>
+          )}
+        </div>
+      ) : null}
       <div className="mt-3 text-xs uppercase tracking-wide text-white/50">
         {completed ? 'Requirements completed' : bid.required_fields?.length ? `${bid.required_fields.length} required answers` : 'No extra requirements'}
       </div>

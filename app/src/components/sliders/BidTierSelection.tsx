@@ -11,9 +11,10 @@ interface BidTierSelectionProps {
   responses?: Record<string, Record<string, string>>;
   onResponseChange: (bidId: string, field: string, value: string) => void;
   onClearSelection?: () => void;
+  executionState?: 'idle' | 'executing' | 'delivered';
 }
 
-export function BidTierSelection({ bids, selected, completedMap, onSelect, responses, onResponseChange, onClearSelection }: BidTierSelectionProps) {
+export function BidTierSelection({ bids, selected, completedMap, onSelect, responses, onResponseChange, onClearSelection, executionState }: BidTierSelectionProps) {
   const visibleBids = selected ? bids.filter((bid) => bid.id === selected.id) : bids;
   const showingSingle = Boolean(selected);
 
@@ -28,6 +29,7 @@ export function BidTierSelection({ bids, selected, completedMap, onSelect, respo
           onSelect={onSelect}
           responses={responses?.[bid.id]}
           onResponseChange={(field, value) => onResponseChange(bid.id, field, value)}
+          executionState={executionState}
         />
       ))}
       {showingSingle && onClearSelection ? (

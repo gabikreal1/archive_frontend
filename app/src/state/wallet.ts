@@ -6,6 +6,7 @@ interface WalletState extends WalletConnection {
   connect: () => Promise<void>;
   disconnect: () => void;
   requestPayment: (amount: string) => Promise<boolean>;
+  refresh: () => Promise<void>;
 }
 
 const initial: WalletConnection = {
@@ -36,12 +37,24 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       if (deposit?.depositUrl && typeof window !== 'undefined') {
         window.open(deposit.depositUrl, '_blank', 'noopener,noreferrer');
       }
-      const refreshed = await walletApi.balance();
-      set({ balance_usdc: refreshed.usdcBalance });
+      await get().refresh();
       return true;
     } catch (error) {
       console.error('Wallet payment failed', error);
       return false;
+    }
+  },
+  async refresh() {
+    try {
+      if (!get().connected) return;
+      const balance = await walletApi.balance();
+      set((state) => ({
+        ...state,
+        address: balance.walletAddress,
+        balance_usdc: balance.usdcBalance
+      }));
+    } catch (error) {
+      console.warn('Failed to refresh wallet balance', error);
     }
   }
 }));

@@ -3,9 +3,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { tasksApi } from '@/api/tasks';
 import type { TaskDispute, TaskFeedback } from '@/types/task';
+import { useWalletStore } from '@/state/wallet';
 
 export function useTaskResult(taskId: string) {
   const queryClient = useQueryClient();
+
+  const refreshWalletBalance = () =>
+    useWalletStore
+      .getState()
+      .refresh()
+      .catch((error) => console.warn('Wallet refresh after feedback failed', error));
 
   const taskQuery = useQuery({
     queryKey: ['task', taskId],
@@ -26,7 +33,10 @@ export function useTaskResult(taskId: string) {
 
   const feedbackMutation = useMutation({
     mutationFn: (payload: TaskFeedback) => tasksApi.feedback(taskId, payload),
-    onSuccess: refreshTask
+    onSuccess: () => {
+      refreshTask();
+      void refreshWalletBalance();
+    }
   });
 
   const disputeMutation = useMutation({

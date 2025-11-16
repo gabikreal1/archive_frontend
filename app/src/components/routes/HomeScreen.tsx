@@ -13,12 +13,18 @@ import { resetChatStore, useChatStore } from '@/state/chat';
 import { useAuth } from '@/providers/auth-provider';
 import { resetSergbotSession } from '@/lib/sergbot-session';
 import { useWalletStore } from '@/state/wallet';
+import { ExecutionResultCard } from '@/components/result/ExecutionResultCard';
+import { FeedbackSection } from '@/components/result/FeedbackSection';
+import { DisputePromptSheet } from '@/components/result/DisputePromptSheet';
+import { tasksApi } from '@/api/tasks';
 
 export function HomeScreen() {
   const workflow = useTaskWorkflow();
   const [bidResponses, setBidResponses] = useState<Record<string, Record<string, string>>>({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [disputeOpen, setDisputeOpen] = useState(false);
   const tasks = useChatStore((state) => state.tasks);
+  const setStoreTask = useChatStore((state) => state.setTask);
   const { signOut } = useAuth();
   const balance = useWalletStore((state) => state.balance_usdc);
   const walletConnected = useWalletStore((state) => state.connected);
@@ -93,6 +99,17 @@ export function HomeScreen() {
     if (!required.length) return true;
     return completionMap[workflow.selectedTier.id];
   }, [completionMap, workflow.selectedTier]);
+
+  const executionState: 'idle' | 'executing' | 'delivered' = useMemo(() => {
+    if (workflow.task?.execution_result) return 'delivered';
+    if (
+      workflow.task?.auction_phase === 'executor_selected' ||
+      workflow.task?.status === 'executing'
+    ) {
+      return 'executing';
+    }
+    return 'idle';
+  }, [workflow.task?.auction_phase, workflow.task?.execution_result, workflow.task?.status]);
 
   const hasAgents = Boolean(workflow.task?.bid_spread?.length);
   const showPaymentAction = hasAgents && Boolean(workflow.selectedTier);
@@ -192,6 +209,7 @@ export function HomeScreen() {
                   responses={bidResponses}
                   onResponseChange={handleBidFieldChange}
                   onClearSelection={workflow.clearSelectedTier}
+                  executionState={executionState}
                 />
               ) : (
                 <div className="rounded-2xl border border-dashed border-white/20 p-6 text-sm text-white/70">
@@ -227,6 +245,32 @@ export function HomeScreen() {
         tier={workflow.selectedTier}
         taskId={workflow.task?.task_id}
         onClose={workflow.closePayment}
+      />
+      {workflow.task?.execution_result ? (
+        <div className="space-y-4 md:col-span-2">
+          <ExecutionResultCard result={workflow.task.execution_result} />
+          <FeedbackSection
+            feedback={workflow.task.feedback}
+            submitting={workflow.ratingSubmitting}
+            onSubmit={workflow.submitRating}
+            onDispute={() => setDisputeOpen(true)}
+          />
+        </div>
+      ) : null}
+      <DisputePromptSheet
+        open={disputeOpen}
+        onClose={() => setDisputeOpen(false)}
+        onSubmit={async (reason) => {
+          if (!workflow.task?.task_id) return;
+          const payload = { opened: true, reason, created_at: new Date().toISOString() };
+          await tasksApi.dispute(workflow.task.task_id, payload);
+          if (workflow.task) {
+            setStoreTask({
+              ...workflow.task,
+              dispute: payload
+            });
+          }
+        }}
       />
     </div>
   );

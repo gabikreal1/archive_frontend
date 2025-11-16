@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useChatStore } from '@/state/chat';
-import type { BidTierSuggestion } from '@/types/task';
+import type { BidTierSuggestion, TaskDetails } from '@/types/task';
 import { dialogApi } from '@/api/dialog';
 import { tasksApi } from '@/api/tasks';
 import { nanoid } from 'nanoid';
 import type { ChatMessage } from '@/types/dialog';
+import { mergeTaskDetails } from '@/lib/task-merge';
+import { useWalletStore } from '@/state/wallet';
 
 const EXECUTOR_QUEUE_STATUSES = new Set(['awaiting_executor', 'matching_executor', 'searching_executor']);
 
@@ -19,6 +21,14 @@ const OFFLINE_MODE =
   process.env.NEXT_PUBLIC_OFFLINE_MODE === 'true' ||
   process.env.NEXT_PUBLIC_OFFLINE_MODE === '1' ||
   process.env.NEXT_PUBLIC_OFFLINE_MODE === 'mock';
+
+async function refreshWalletBalance() {
+  try {
+    await useWalletStore.getState().refresh();
+  } catch (error) {
+    console.warn('Wallet balance refresh failed', error);
+  }
+}
 
 export function useTaskWorkflow() {
   const setTask = useChatStore((state) => state.setTask);
@@ -34,6 +44,7 @@ export function useTaskWorkflow() {
 
   const [selectedTier, setSelectedTier] = useState<BidTierSuggestion | undefined>();
   const [paymentSheetOpen, setPaymentSheetOpen] = useState(false);
+  const [ratingSubmitting, setRatingSubmitting] = useState(false);
 
   useEffect(() => {
     if (task?.selected_tier) {
@@ -41,15 +52,16 @@ export function useTaskWorkflow() {
     }
   }, [task?.selected_tier]);
 
-  const refreshTask = useCallback(
-    async (taskId: string) => {
-      if (OFFLINE_MODE) return;
-      const latest = await tasksApi.fetch(taskId);
-      setTask(latest);
-      return latest;
-    },
-    [setTask]
-  );
+  const refreshTask = useCallback(async (taskId: string) => {
+    if (OFFLINE_MODE) return;
+    const latest = await tasksApi.fetch(taskId);
+    const existing = useChatStore
+      .getState()
+      .tasks.find((storedTask) => storedTask.task_id === taskId);
+    const merged: TaskDetails = mergeTaskDetails(existing ?? task, latest);
+    setTask(merged);
+    return merged;
+  }, [setTask, task]);
 
   const sendMessage = useCallback(
     async (content: string) => {
@@ -90,6 +102,7 @@ export function useTaskWorkflow() {
         await tasksApi.selectTier(task.task_id, tier.backend_bid_id ?? tier.id);
         await refreshTask(task.task_id);
       }
+      void refreshWalletBalance();
     },
     [setBidDetails, task, refreshTask]
   );
@@ -100,6 +113,44 @@ export function useTaskWorkflow() {
     setSelectedTier(undefined);
     setBidDetails(undefined);
   }, [setBidDetails]);
+
+  const submitRating = useCallback(
+    async (rating: number, comment?: string) => {
+      if (!task?.task_id) return;
+      if (!task.delivery_id) {
+        if (typeof window !== 'undefined') {
+          window.alert('Delivery is not ready yet. Please wait for the agent to finish.');
+        }
+        return;
+      }
+
+      try {
+        setRatingSubmitting(true);
+        await tasksApi.submitRating(task.task_id, {
+          deliveryId: task.delivery_id,
+          rating,
+          feedback: comment?.trim() ? comment.trim() : undefined
+        });
+        setTask({
+          ...task,
+          feedback: {
+            rating,
+            comment
+          },
+          auction_phase: 'rating_submitted'
+        });
+        void refreshWalletBalance();
+      } catch (error) {
+        console.warn('Failed to submit rating', error);
+        if (typeof window !== 'undefined') {
+          window.alert('Could not submit rating. Please try again.');
+        }
+      } finally {
+        setRatingSubmitting(false);
+      }
+    },
+    [task, setTask]
+  );
 
   return useMemo(
     () => ({
@@ -115,7 +166,9 @@ export function useTaskWorkflow() {
       paymentSheetOpen,
       openPayment,
       closePayment,
-      streaming
+      streaming,
+      submitRating,
+      ratingSubmitting
     }),
     [
       messages,
@@ -130,7 +183,9 @@ export function useTaskWorkflow() {
       paymentSheetOpen,
       openPayment,
       closePayment,
-      streaming
+      streaming,
+      submitRating,
+      ratingSubmitting
     ]
   );
 }

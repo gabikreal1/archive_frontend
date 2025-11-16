@@ -11,6 +11,7 @@ interface WalletContextValue {
   connect: () => Promise<void>;
   disconnect: () => void;
   requestPayment: (amount: string) => Promise<boolean>;
+  refresh: () => Promise<void>;
 }
 
 const WalletContext = createContext<WalletContextValue | undefined>(undefined);
@@ -23,7 +24,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     network: state.network,
     connect: state.connect,
     disconnect: state.disconnect,
-    requestPayment: state.requestPayment
+    requestPayment: state.requestPayment,
+    refresh: state.refresh
   }));
 
   const memoized = useMemo(() => value, [value]);

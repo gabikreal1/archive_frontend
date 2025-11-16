@@ -11,6 +11,7 @@ import type { JobBid, JobResponse } from '@/lib/task-map';
 import { mapAutopilotCandidate, mapJobResponse } from '@/lib/task-map';
 import { tasksApi, type JobCreationPayload } from '@/api/tasks';
 import { attachSergbotSocket, detachSergbotSocket, ensureConversationId } from '@/lib/sergbot-session';
+import { mergeTaskDetails } from '@/lib/task-merge';
 import type {
   AutopilotBidCandidate,
   BidTierSuggestion,
@@ -217,8 +218,9 @@ async function ensureTaskLoaded(jobId: string): Promise<TaskDetails | undefined>
   }
   try {
     const latest = await tasksApi.fetch(jobId);
-    state.setTask(latest);
-    return latest;
+    const merged = mergeTaskDetails(existing, latest);
+    state.setTask(merged);
+    return merged;
   } catch (error) {
     console.warn('Failed to hydrate task for websocket event', error);
     return undefined;
@@ -323,8 +325,13 @@ export function useRealtimeSocket() {
       if (!shouldHandleJob(bid.jobId)) return;
       try {
         const latest = await tasksApi.fetch(bid.jobId);
-        const { setTask } = useChatStore.getState();
-        setTask(latest);
+        const state = useChatStore.getState();
+        const current =
+          state.task?.task_id === bid.jobId
+            ? state.task
+            : state.tasks.find((task) => task.task_id === bid.jobId);
+        const merged = mergeTaskDetails(current, latest);
+        state.setTask(merged);
       } catch (error) {
         console.warn('Failed to refresh job after bid', error);
       }
@@ -421,11 +428,17 @@ export function useRealtimeSocket() {
       if (!shouldHandleJob(payload.jobId)) return;
       try {
         const latest = await tasksApi.fetch(payload.jobId);
-        useChatStore.getState().setTask({
-          ...latest,
+        const state = useChatStore.getState();
+        const current =
+          state.task?.task_id === payload.jobId
+            ? state.task
+            : state.tasks.find((task) => task.task_id === payload.jobId);
+        const merged = mergeTaskDetails(current, latest, {
           execution_result: payload.result,
-          auction_phase: 'execution_completed'
+          auction_phase: 'execution_completed',
+          delivery_id: payload.deliveryId ?? current?.delivery_id
         });
+        state.setTask(merged);
       } catch (error) {
         console.warn('Failed to refresh job after execution completion', error);
         const task = await ensureTaskLoaded(payload.jobId);
@@ -433,7 +446,8 @@ export function useRealtimeSocket() {
         patchTask(payload.jobId, {
           execution_result: payload.result,
           auction_phase: 'execution_completed',
-          status: 'result_ready'
+          status: 'result_ready',
+          delivery_id: payload.deliveryId ?? task.delivery_id
         });
       }
     });
