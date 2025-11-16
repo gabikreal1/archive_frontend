@@ -11,6 +11,7 @@ interface ChatState {
   latestSergbotTaskId?: string;
   latestSergbotTaskStatus?: string;
   setTask: (task: TaskDetails) => void;
+  updateTaskPartial: (taskId: string, patch: Partial<TaskDetails>) => void;
   appendMessage: (message: ChatMessage) => void;
   setMessages: (messages: ChatMessage[]) => void;
   setBidDetails: (tier?: BidTierSuggestion) => void;
@@ -39,6 +40,16 @@ export const useChatStore = create<ChatState>((set) => ({
       task,
       tasks: upsertTask(state.tasks, task)
     })),
+  updateTaskPartial: (taskId, patch) =>
+    set((state: ChatState) => {
+      const isActiveTask = state.task?.task_id === taskId;
+      const nextTask = isActiveTask ? { ...state.task!, ...patch } : state.task;
+      const nextTasks = state.tasks.map((task) => (task.task_id === taskId ? { ...task, ...patch } : task));
+      return {
+        task: nextTask,
+        tasks: nextTasks
+      };
+    }),
   appendMessage: (message) =>
     set((state: ChatState) => ({ messages: [...state.messages, message] })),
   setMessages: (messages) => set({ messages }),

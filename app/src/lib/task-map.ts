@@ -1,4 +1,4 @@
-import type { BidTierSuggestion, TaskDetails } from '@/types/task';
+import type { AutopilotBidCandidate, AutopilotTier, BidTierSuggestion, TaskDetails } from '@/types/task';
 
 export type JobStatus = 'OPEN' | 'IN_PROGRESS' | 'COMPLETED' | 'DISPUTED';
 
@@ -33,6 +33,12 @@ const STATUS_MAP: Record<JobStatus, TaskDetails['status']> = {
 
 const TIER_LABELS = ['economy', 'balanced', 'premium'];
 
+function resolveTierLabel(tierHint?: AutopilotTier, fallback?: string) {
+  if (tierHint === 'PREMIUM') return 'premium';
+  if (tierHint === 'ECONOMY') return 'economy';
+  return fallback ?? 'tier';
+}
+
 export function mapBidResponse(bid: JobBid, index: number): BidTierSuggestion {
   return {
     id: TIER_LABELS[index] ?? `tier-${index + 1}`,
@@ -41,6 +47,26 @@ export function mapBidResponse(bid: JobBid, index: number): BidTierSuggestion {
     time_estimate_min: Math.max(1, Math.round(Number(bid.deliveryTime ?? 0) / 60)),
     agent_trust_stars: Number(bid.reputation ?? 3) || 3,
     description: bid.bidderWallet,
+    required_fields: []
+  };
+}
+
+export function mapAutopilotCandidate(candidate: AutopilotBidCandidate, explicitTier?: 'premium' | 'economy'): BidTierSuggestion {
+  const tierId = explicitTier ?? resolveTierLabel(candidate.tierHint, candidate.id);
+  const safeEta = Number.isFinite(candidate.etaMinutes) ? candidate.etaMinutes : 0;
+  const confidence = Number.isFinite(candidate.confidence) ? candidate.confidence : 0.6;
+  return {
+    id: tierId,
+    backend_bid_id: candidate.id,
+    price_usdc: Number(candidate.priceUsd ?? 0).toFixed(2),
+    time_estimate_min: Math.max(1, Math.round(safeEta)),
+    agent_trust_stars: Math.min(5, Math.max(1, Math.round(confidence * 5))),
+    agent_id: candidate.agentId,
+    description: candidate.agentName ?? candidate.summary,
+    tier_hint: candidate.tierHint,
+    autopilot_candidate_id: candidate.id,
+    autopilot_summary: candidate.summary,
+    autopilot_reasoning: candidate.reasoning,
     required_fields: []
   };
 }

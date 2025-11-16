@@ -8,6 +8,13 @@ import { tasksApi } from '@/api/tasks';
 import { nanoid } from 'nanoid';
 import type { ChatMessage } from '@/types/dialog';
 
+const EXECUTOR_QUEUE_STATUSES = new Set(['awaiting_executor', 'matching_executor', 'searching_executor']);
+
+function isAwaitingExecutorStatus(status?: string) {
+  if (!status) return false;
+  return EXECUTOR_QUEUE_STATUSES.has(status.toLowerCase());
+}
+
 const OFFLINE_MODE =
   process.env.NEXT_PUBLIC_OFFLINE_MODE === 'true' ||
   process.env.NEXT_PUBLIC_OFFLINE_MODE === '1' ||
@@ -23,6 +30,7 @@ export function useTaskWorkflow() {
   const setStreaming = useChatStore((state) => state.setStreaming);
   const latestSergbotTaskId = useChatStore((state) => state.latestSergbotTaskId);
   const latestSergbotTaskStatus = useChatStore((state) => state.latestSergbotTaskStatus);
+  const awaitingExecutor = isAwaitingExecutorStatus(latestSergbotTaskStatus);
 
   const [selectedTier, setSelectedTier] = useState<BidTierSuggestion | undefined>();
   const [paymentSheetOpen, setPaymentSheetOpen] = useState(false);
@@ -46,7 +54,7 @@ export function useTaskWorkflow() {
   const sendMessage = useCallback(
     async (content: string) => {
       if (!content.trim()) return;
-      if (latestSergbotTaskId) return;
+      if (awaitingExecutor) return;
       const userMessage: ChatMessage = {
         id: nanoid(),
         role: 'user',
@@ -70,7 +78,7 @@ export function useTaskWorkflow() {
         setStreaming(false);
       }
     },
-    [appendMessage, task?.task_id, latestSergbotTaskId, setStreaming]
+    [appendMessage, task?.task_id, latestSergbotTaskId, setStreaming, awaitingExecutor]
   );
 
   const selectTier = useCallback(
@@ -92,8 +100,6 @@ export function useTaskWorkflow() {
     setSelectedTier(undefined);
     setBidDetails(undefined);
   }, [setBidDetails]);
-
-  const awaitingExecutor = Boolean(latestSergbotTaskId);
 
   return useMemo(
     () => ({

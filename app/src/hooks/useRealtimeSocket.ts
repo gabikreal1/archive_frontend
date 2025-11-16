@@ -8,9 +8,17 @@ import { useChatStore } from '@/state/chat';
 import { useWalletStore } from '@/state/wallet';
 import type { ChatMessage } from '@/types/dialog';
 import type { JobBid, JobResponse } from '@/lib/task-map';
-import { mapJobResponse } from '@/lib/task-map';
+import { mapAutopilotCandidate, mapJobResponse } from '@/lib/task-map';
 import { tasksApi, type JobCreationPayload } from '@/api/tasks';
 import { attachSergbotSocket, detachSergbotSocket, ensureConversationId } from '@/lib/sergbot-session';
+import type {
+  AutopilotBidCandidate,
+  BidTierSuggestion,
+  JobAuctionRecommendationsPayload,
+  JobExecutionOutput,
+  JobRatingEventPayload,
+  TaskDetails
+} from '@/types/task';
 
 const WS_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3000';
 const OFFLINE_MODE =
@@ -29,12 +37,38 @@ type AgentBotMessagePayload = {
   context?: {
     sergbotTaskId?: string;
     sergbotTaskStatus?: string;
+    taskStatus?: string;
+    task_status?: string;
     [key: string]: unknown;
   };
 };
 
 type AgentErrorPayload = {
   message?: string;
+};
+
+type AuctionStartedPayload = {
+  jobId: string;
+  deadline: number;
+};
+
+type ExecutorSelectedPayload = {
+  jobId: string;
+  candidate: AutopilotBidCandidate;
+};
+
+type ExecutionCompletedPayload = {
+  jobId: string;
+  result: JobExecutionOutput;
+  deliveryId?: string;
+};
+
+type OrderbookBidPlacedPayload = {
+  jobId: string;
+  bidId: string;
+  bidder: string;
+  price: string | number;
+  etaMinutes?: number;
 };
 
 const submittedSergbotTaskIds = new Set<string>();
@@ -123,6 +157,94 @@ function stopStreaming() {
   setStreaming(false);
 }
 
+function upsertAutopilotCandidate(list: AutopilotBidCandidate[] = [], candidate: AutopilotBidCandidate) {
+  const index = list.findIndex((item) => item.id === candidate.id);
+  if (index === -1) {
+    return [...list, candidate];
+  }
+  const clone = [...list];
+  clone[index] = candidate;
+  return clone;
+}
+
+function upsertBidSuggestion(list: BidTierSuggestion[] = [], suggestion: BidTierSuggestion) {
+  const getKey = (bid: BidTierSuggestion) => bid.backend_bid_id ?? bid.id;
+  const targetKey = getKey(suggestion);
+  const index = list.findIndex((bid) => getKey(bid) === targetKey);
+  if (index === -1) {
+    return [...list, suggestion];
+  }
+  const clone = [...list];
+  clone[index] = suggestion;
+  return clone;
+}
+
+function shortenAddress(address?: string) {
+  if (!address) return 'unknown';
+  if (address.length <= 10) return address;
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+function formatOnchainPrice(raw?: string | number) {
+  const value = typeof raw === 'string' ? Number(raw) : raw ?? 0;
+  if (!Number.isFinite(value)) return '0.00';
+  if (value > 10_000) {
+    return (value / 1_000_000).toFixed(2);
+  }
+  return value.toFixed(2);
+}
+
+function mapOrderbookBidToSuggestion(payload: OrderbookBidPlacedPayload): BidTierSuggestion {
+  return {
+    id: `onchain-${payload.bidId}`,
+    backend_bid_id: payload.bidId,
+    price_usdc: formatOnchainPrice(payload.price),
+    time_estimate_min: payload.etaMinutes ? Math.max(1, Math.round(payload.etaMinutes)) : 60,
+    agent_trust_stars: 3,
+    agent_id: payload.bidder,
+    description: `On-chain bidder ${shortenAddress(payload.bidder)}`,
+    required_fields: []
+  };
+}
+
+async function ensureTaskLoaded(jobId: string): Promise<TaskDetails | undefined> {
+  const state = useChatStore.getState();
+  if (state.task?.task_id === jobId) return state.task;
+  const existing = state.tasks.find((task) => task.task_id === jobId);
+  if (existing) {
+    state.setTask(existing);
+    return existing;
+  }
+  try {
+    const latest = await tasksApi.fetch(jobId);
+    state.setTask(latest);
+    return latest;
+  } catch (error) {
+    console.warn('Failed to hydrate task for websocket event', error);
+    return undefined;
+  }
+}
+
+function recommendationMapFromPayload(payload: JobAuctionRecommendationsPayload) {
+  const premium = payload.recommendations.premium
+    ? mapAutopilotCandidate(payload.recommendations.premium, 'premium')
+    : undefined;
+  const economy = payload.recommendations.economy
+    ? mapAutopilotCandidate(payload.recommendations.economy, 'economy')
+    : undefined;
+  const map: Partial<Record<'premium' | 'economy', BidTierSuggestion>> = {
+    premium,
+    economy
+  };
+  const bids = [premium, economy].filter((bid): bid is BidTierSuggestion => Boolean(bid));
+  return { map, bids };
+}
+
+function patchTask(jobId: string, patch: Partial<TaskDetails>) {
+  const { updateTaskPartial } = useChatStore.getState();
+  updateTaskPartial(jobId, patch);
+}
+
 export function useRealtimeSocket() {
   const token = useUserStore((state) => state.accessToken);
   const authenticated = useUserStore((state) => state.authenticated);
@@ -167,15 +289,20 @@ export function useRealtimeSocket() {
       appendAgentBotMessage(payload.message);
       stopStreaming();
       const sergbotTaskId = payload.context?.sergbotTaskId;
+      const rawTaskStatus = (payload.context?.taskStatus ?? payload.context?.task_status ?? payload.context?.sergbotTaskStatus) as
+        | string
+        | undefined;
       const { setSergbotTaskMeta } = useChatStore.getState();
-      if (sergbotTaskId) {
+      if (sergbotTaskId || rawTaskStatus) {
         setSergbotTaskMeta({
           id: sergbotTaskId,
-          status: payload.context?.sergbotTaskStatus as string | undefined
+          status: rawTaskStatus
         });
-        await maybeSubmitJob(sergbotTaskId, payload.context);
       } else {
         setSergbotTaskMeta();
+      }
+      if (sergbotTaskId) {
+        await maybeSubmitJob(sergbotTaskId, payload.context);
       }
     });
 
@@ -216,6 +343,112 @@ export function useRealtimeSocket() {
     socket.on('payment_released', ({ job }: JobWithBidPayload) => {
       if (!shouldHandleJob(job.id, job.posterWallet)) return;
       updateTask(job);
+    });
+
+    socket.on('job.auction.started', async (payload: AuctionStartedPayload) => {
+      if (!shouldHandleJob(payload.jobId)) return;
+      const task = await ensureTaskLoaded(payload.jobId);
+      if (!task) return;
+      patchTask(payload.jobId, {
+        auction_deadline_ms: payload.deadline,
+        auction_phase: 'collecting_bids',
+        auction_total_bids: 0,
+        auction_candidates: [],
+        recommendations: undefined,
+        selected_tier: undefined,
+        locked_price_usdc: undefined
+      });
+      useChatStore.getState().setBidDetails(undefined);
+    });
+
+    socket.on('job.auction.bid', async (candidate: AutopilotBidCandidate) => {
+      if (!shouldHandleJob(candidate.jobId)) return;
+      const task = await ensureTaskLoaded(candidate.jobId);
+      if (!task) return;
+      const nextCandidates = upsertAutopilotCandidate(task.auction_candidates, candidate);
+      const suggestion = mapAutopilotCandidate(candidate);
+      const nextBidSpread = upsertBidSuggestion(task.bid_spread, suggestion);
+      patchTask(candidate.jobId, {
+        auction_candidates: nextCandidates,
+        auction_total_bids: nextBidSpread.length,
+        bid_spread: nextBidSpread,
+        auction_phase: task.auction_phase ?? 'collecting_bids'
+      });
+    });
+
+    socket.on('job.auction.recommendations', async (payload: JobAuctionRecommendationsPayload) => {
+      if (!shouldHandleJob(payload.jobId)) return;
+      const task = await ensureTaskLoaded(payload.jobId);
+      if (!task) return;
+      const { map, bids } = recommendationMapFromPayload(payload);
+      patchTask(payload.jobId, {
+        bid_spread: bids.length ? bids : task.bid_spread,
+        recommendations: map,
+        auction_total_bids: payload.totalBids,
+        auction_phase: 'recommendations_ready'
+      });
+    });
+
+    socket.on('chain:orderbook.bidPlaced', async (payload: OrderbookBidPlacedPayload) => {
+      if (!shouldHandleJob(payload.jobId)) return;
+      const task = await ensureTaskLoaded(payload.jobId);
+      if (!task) return;
+      const suggestion = mapOrderbookBidToSuggestion(payload);
+      const nextBidSpread = upsertBidSuggestion(task.bid_spread, suggestion);
+      patchTask(payload.jobId, {
+        bid_spread: nextBidSpread,
+        auction_total_bids: nextBidSpread.length,
+        auction_phase: task.auction_phase ?? 'collecting_bids'
+      });
+    });
+
+    socket.on('job.executor.selected', async (payload: ExecutorSelectedPayload) => {
+      if (!shouldHandleJob(payload.jobId)) return;
+      const task = await ensureTaskLoaded(payload.jobId);
+      if (!task) return;
+      const tierLabel = payload.candidate.tierHint === 'PREMIUM' ? 'premium' : payload.candidate.tierHint === 'ECONOMY' ? 'economy' : undefined;
+      const selectedTier = mapAutopilotCandidate(payload.candidate, tierLabel);
+      patchTask(payload.jobId, {
+        selected_tier: selectedTier,
+        locked_price_usdc: selectedTier.price_usdc,
+        executor_candidate: payload.candidate,
+        auction_phase: 'executor_selected'
+      });
+      useChatStore.getState().setBidDetails(selectedTier);
+    });
+
+    socket.on('job.execution.completed', async (payload: ExecutionCompletedPayload) => {
+      if (!shouldHandleJob(payload.jobId)) return;
+      try {
+        const latest = await tasksApi.fetch(payload.jobId);
+        useChatStore.getState().setTask({
+          ...latest,
+          execution_result: payload.result,
+          auction_phase: 'execution_completed'
+        });
+      } catch (error) {
+        console.warn('Failed to refresh job after execution completion', error);
+        const task = await ensureTaskLoaded(payload.jobId);
+        if (!task) return;
+        patchTask(payload.jobId, {
+          execution_result: payload.result,
+          auction_phase: 'execution_completed',
+          status: 'result_ready'
+        });
+      }
+    });
+
+    socket.on('job.rating.submitted', async (payload: JobRatingEventPayload) => {
+      if (!shouldHandleJob(payload.jobId)) return;
+      const task = await ensureTaskLoaded(payload.jobId);
+      if (!task) return;
+      patchTask(payload.jobId, {
+        feedback: {
+          rating: payload.rating,
+          comment: payload.feedback
+        },
+        auction_phase: 'rating_submitted'
+      });
     });
 
     return () => {
